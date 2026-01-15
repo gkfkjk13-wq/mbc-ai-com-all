@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { Language, Duration, Tone, AgeGroup, GeneratedContent } from "../types";
 
-// Standard AI helper to obtain a new client instance for text/image/TTS
+// Standard AI helper to obtain a new client instance
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 export const recommendGenre = async (
@@ -18,12 +18,13 @@ export const recommendGenre = async (
   - Target Audience: ${ageGroup}
   
   From this list of genres: [${genreList}], recommend the single best one that would likely go viral.
-  Return only JSON with "genreId" (matching an ID from the list) and "reason" (short 1-sentence explanation in Korean).`;
+  Return only JSON with "genreId" and "reason" in Korean.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
+      systemInstruction: "You are a specialized YouTube strategy consultant. Always respond in Korean.",
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -56,42 +57,40 @@ export const generateContent = async (
   const langText = language === Language.KOREAN ? '한국어' : 'English';
   const durText = duration === Duration.LONG ? 'Long-form (10+ min)' : 'Short-form (under 1 min)';
   
-  const prompt = `You are a professional YouTube content creator. Generate viral content for the following:
+  // Stronger instruction to prevent English output
+  const systemInstruction = `You are a professional YouTube content master. 
+  CRITICAL: Every single field in your response (script, titles, ttsScript) MUST be written in ${langText}. 
+  Do not use any other language under any circumstances.`;
+
+  const prompt = `Generate viral content for:
   - Genre: ${genreName}
-  - Subject/Topic: ${subject || 'Trending content'}
+  - Subject: ${subject || 'Trending content'}
   - Language: ${langText}
   - Format: ${durText}
   - Tone: ${tone}
   - Target Audience: ${ageGroup}
   - Script Verbosity: ${scriptLength}%
-  - Visual Style for images: ${visualStyle}
+  - Visual Style: ${visualStyle}
 
-  Provide a complete script with Intro, Body, and Outro sections.
-  Suggest 5 clickbait-style but high-quality titles.
-  Provide exactly ${imageCount} descriptive image generation prompts that act as a storyboard for key scenes of this script.
-  All image prompts must follow the visual style: "${visualStyle}".
-  Provide a TTS-friendly version of the script (natural flow, emphasis markers).`;
+  Include:
+  1. A full script in ${langText}.
+  2. 5 high-quality titles in ${langText}.
+  3. Exactly ${imageCount} image prompts following the "${visualStyle}" style.
+  4. A natural TTS version of the script in ${langText}.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: prompt,
     config: {
+      systemInstruction,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          script: { type: Type.STRING, description: "Full structured video script" },
-          titles: { 
-            type: Type.ARRAY, 
-            items: { type: Type.STRING },
-            description: "5 recommended titles" 
-          },
-          imagePrompts: { 
-            type: Type.ARRAY, 
-            items: { type: Type.STRING },
-            description: `${imageCount} detailed prompts for image generation` 
-          },
-          ttsScript: { type: Type.STRING, description: "Voice-over optimized script" }
+          script: { type: Type.STRING },
+          titles: { type: Type.ARRAY, items: { type: Type.STRING } },
+          imagePrompts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          ttsScript: { type: Type.STRING }
         },
         required: ["script", "titles", "imagePrompts", "ttsScript"]
       }
@@ -125,9 +124,6 @@ export const generateImageFromPrompt = async (prompt: string, aspectRatio: strin
   throw new Error("Failed to generate image");
 };
 
-/**
- * Generate Video using Veo and return a playable Blob URL.
- */
 export const generateVideo = async (
   imageB64: string, 
   prompt: string, 
@@ -135,7 +131,6 @@ export const generateVideo = async (
   onStatusUpdate?: (status: string) => void
 ): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-  
   const base64Data = imageB64.split(',')[1] || imageB64;
   
   onStatusUpdate?.("영상 데이터 전송 중...");
@@ -161,10 +156,9 @@ export const generateVideo = async (
   }
 
   const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!downloadLink) throw new Error("Video generation failed to return a link");
+  if (!downloadLink) throw new Error("Video generation failed");
   
   onStatusUpdate?.("영상 파일을 로드하고 있습니다...");
-  // Fetch the MP4 bytes and convert to Blob URL for better browser compatibility
   const fetchResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
   if (!fetchResponse.ok) throw new Error("Failed to download video file");
   const videoBlob = await fetchResponse.blob();
@@ -173,9 +167,10 @@ export const generateVideo = async (
 
 export const generateSpeech = async (text: string, language: Language): Promise<string> => {
   const ai = getAI();
+  const langName = language === Language.KOREAN ? 'Korean' : 'English';
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: `Read this script for a YouTube video naturally: ${text}` }] }],
+    contents: [{ parts: [{ text: `Read this script naturally in ${langName}: ${text}` }] }],
     config: {
       responseModalities: [Modality.AUDIO],
       speechConfig: {

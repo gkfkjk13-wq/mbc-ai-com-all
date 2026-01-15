@@ -4,7 +4,7 @@ import {
   Film, Sparkles, Globe, Clock, Zap, FileText, Target, Image as ImageIcon, 
   Mic, Copy, Download, Star, Trash2, Play, Settings, Menu, X, CheckCircle, AlertCircle,
   ChevronRight, Wand2, Search, Layers, RefreshCw, Loader2, Type, Maximize2, Video, 
-  ExternalLink, CreditCard, Key, ShieldCheck, Lock, Terminal, Info
+  ExternalLink, CreditCard, Key, ShieldCheck, Lock, Terminal, Info, Server, AlertTriangle
 } from 'lucide-react';
 import { GENRES, TONE_OPTIONS, AGE_GROUP_OPTIONS, ASPECT_RATIOS, IMAGE_STYLES } from './constants';
 import { 
@@ -38,6 +38,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [hasKey, setHasKey] = useState(false);
+  const [isAiStudio, setIsAiStudio] = useState(false);
   
   // Image/Video Generation States
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -49,20 +50,38 @@ export default function App() {
   const [generatedVideos, setGeneratedVideos] = useState<Record<number, string>>({});
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
 
-  // Sync key status with platform
+  // Sync key status and detect environment
   useEffect(() => {
     const checkKey = async () => {
-      try {
-        const selected = await window.aistudio.hasSelectedApiKey();
-        setHasKey(selected);
-      } catch (e) {
-        console.error("Key check failed", e);
+      const aiStudioAvailable = !!(window as any).aistudio;
+      setIsAiStudio(aiStudioAvailable);
+
+      if (aiStudioAvailable) {
+        try {
+          const selected = await (window as any).aistudio.hasSelectedApiKey();
+          setHasKey(selected);
+        } catch (e) {
+          console.error("AI Studio Key check failed", e);
+        }
+      } else {
+        // External environment (Vercel)
+        const envKey = process.env.API_KEY;
+        setHasKey(!!envKey && envKey.length > 5);
       }
     };
+
     checkKey();
     const timer = setInterval(checkKey, 3000);
     return () => clearInterval(timer);
   }, []);
+
+  const handleKeyClick = () => {
+    if (isAiStudio) {
+      (window as any).aistudio.openSelectKey();
+    } else {
+      showMsg('Vercel 대시보드 환경변수에서 API_KEY를 설정해야 합니다.', 'info');
+    }
+  };
 
   const showMsg = (text: string, type: Message['type']) => {
     setMessage({ text, type });
@@ -114,7 +133,7 @@ export default function App() {
       setActiveTab('script');
     } catch (error) {
       console.error(error);
-      showMsg('생성 중 오류 발생', 'error');
+      showMsg('생성 중 오류 발생. API 키 설정을 확인하세요.', 'error');
     } finally {
       setLoading(false);
     }
@@ -144,10 +163,15 @@ export default function App() {
     }
 
     try {
-      const hasSelected = await window.aistudio.hasSelectedApiKey();
-      if (!hasSelected) {
-        await window.aistudio.openSelectKey();
-        showMsg('비디오 기능을 위해 API 키 설정이 필요합니다.', 'info');
+      if (isAiStudio) {
+        const hasSelected = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasSelected) {
+          await (window as any).aistudio.openSelectKey();
+          return;
+        }
+      } else if (!hasKey) {
+        showMsg('Vercel 대시보드에서 API_KEY 환경변수를 설정해야 합니다.', 'error');
+        return;
       }
 
       setIsGeneratingVideo(index);
@@ -164,12 +188,7 @@ export default function App() {
       setGeneratedContent(prev => prev ? ({ ...prev, generatedVideos: updatedVideos }) : null);
       showMsg('동영상이 생성되었습니다! 🎬', 'success');
     } catch (error: any) {
-      if (error.message?.includes("Requested entity was not found")) {
-        await window.aistudio.openSelectKey();
-        showMsg('API 키를 다시 설정해 주세요.', 'error');
-      } else {
-        showMsg('동영상 생성 실패', 'error');
-      }
+      showMsg('동영상 생성 실패. API 프로젝트 권한을 확인하세요.', 'error');
     } finally {
       setIsGeneratingVideo(null);
       setVideoStatus('');
@@ -256,47 +275,45 @@ export default function App() {
                 </h1>
               </div>
 
-              {/* Enhanced API Key Input Field (Visual Implementation) */}
+              {/* Key UI - Adjusted for Vercel Detection */}
               <div className="hidden lg:flex items-center gap-4">
                 <div className="h-8 w-[1px] bg-[#1e293b]"></div>
                 <div className="flex flex-col">
                   <div 
-                    onClick={() => window.aistudio.openSelectKey()}
+                    onClick={handleKeyClick}
                     className={`relative flex items-center bg-[#0d1117] border rounded-xl px-4 py-3 cursor-pointer transition-all hover:border-indigo-500 hover:ring-2 hover:ring-indigo-500/10 min-w-[420px] shadow-inner ${
-                      hasKey ? 'border-emerald-500/40 shadow-[inset_0_0_10px_rgba(16,185,129,0.05)]' : 'border-[#334155] animate-pulse'
+                      hasKey ? 'border-emerald-500/40' : 'border-[#334155]'
                     }`}
                   >
                     <div className="flex items-center gap-3 flex-1 overflow-hidden">
-                      <Key className={`w-4 h-4 shrink-0 ${hasKey ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      {isAiStudio ? (
+                        <Key className={`w-4 h-4 shrink-0 ${hasKey ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      ) : (
+                        <Server className={`w-4 h-4 shrink-0 ${hasKey ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      )}
                       <div className="flex flex-col truncate">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 mb-0.5">Gemini API Key Connection</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 mb-0.5">
+                          {isAiStudio ? 'AI Studio Mode' : 'Vercel Deployment'}
+                        </span>
                         <div className="font-mono text-sm truncate">
                           {hasKey ? (
                             <span className="text-emerald-400">••••••••••••••••••••••••••••••••</span>
                           ) : (
-                            <span className="text-slate-500 italic">클릭하여 보유하신 API 키를 입력/연동하세요...</span>
+                            <span className="text-slate-500 italic">
+                              {isAiStudio ? 'API 키를 연동하세요...' : 'Dashboard에서 API_KEY를 추가하세요'}
+                            </span>
                           )}
                         </div>
                       </div>
                     </div>
                     
                     <div className={`ml-4 px-3 py-1.5 rounded-lg border transition-all flex items-center gap-2 ${
-                      hasKey ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-indigo-500 text-white border-indigo-400 shadow-lg shadow-indigo-500/20'
+                      hasKey ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400 border-slate-700'
                     }`}>
-                      {hasKey ? <ShieldCheck className="w-4 h-4" /> : <Terminal className="w-4 h-4" />}
-                      <span className="text-[11px] font-black uppercase">{hasKey ? 'Connected' : 'Enter Key'}</span>
+                      {hasKey ? <ShieldCheck className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                      <span className="text-[11px] font-black uppercase">{hasKey ? 'Active' : 'Setup'}</span>
                     </div>
                   </div>
-                  
-                  {/* Guide Hint for the confusing popup */}
-                  {!hasKey && (
-                    <div className="mt-1 flex items-center gap-1.5 px-2">
-                      <Info className="w-3 h-3 text-amber-500" />
-                      <p className="text-[9px] text-slate-500 font-bold">
-                        팝업에서 <span className="text-amber-400">'Create a new key'</span>를 클릭하여 보유한 키를 연결하세요.
-                      </p>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -326,8 +343,29 @@ export default function App() {
           </div>
         )}
 
-        {/* Instructions Card for new users */}
-        {!hasKey && (
+        {/* Improved Guidance for Vercel Users */}
+        {!hasKey && !isAiStudio && (
+          <div className="mb-8 p-8 bg-amber-500/10 border border-amber-500/20 rounded-[2.5rem] flex flex-col md:flex-row items-center gap-8 shadow-2xl">
+            <div className="p-5 bg-amber-500 rounded-[1.5rem] shadow-xl shadow-amber-500/20">
+              <AlertTriangle className="w-10 h-10 text-white" />
+            </div>
+            <div className="flex-1 text-center md:text-left">
+              <h3 className="text-xl font-black text-white mb-2">Vercel 배포판 API 키 설정이 필요합니다</h3>
+              <p className="text-sm text-slate-400 leading-relaxed max-w-2xl">
+                Vercel 환경에서는 보안상 팝업 입력이 지원되지 않습니다. <br/>
+                Vercel 프로젝트 페이지의 <strong>Settings &rarr; Environment Variables</strong> 메뉴에서 
+                <code className="mx-1 px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">API_KEY</code> 변수를 추가한 뒤 
+                Redeploy를 진행해 주세요.
+              </p>
+            </div>
+            <a href="https://vercel.com/dashboard" target="_blank" className="px-8 py-4 bg-white text-amber-950 rounded-2xl font-black text-sm hover:scale-105 transition-all shadow-xl shadow-white/5 flex items-center gap-2">
+              Vercel 대시보드 열기 <ExternalLink className="w-4 h-4" />
+            </a>
+          </div>
+        )}
+
+        {/* Original AI Studio Guidance */}
+        {!hasKey && isAiStudio && (
           <div className="mb-8 p-6 bg-indigo-900/10 border border-indigo-500/20 rounded-[2rem] flex flex-col md:flex-row items-center gap-6 shadow-2xl">
             <div className="p-4 bg-indigo-600 rounded-[1.5rem] shadow-xl shadow-indigo-600/20">
               <Key className="w-8 h-8 text-white" />
@@ -339,12 +377,7 @@ export default function App() {
                 팝업창에서 <span className="text-indigo-400 font-bold">'Create a new key'</span>를 누르면 보유하신 키를 바로 사용할 수 있습니다.
               </p>
             </div>
-            <div className="flex flex-col gap-2">
-              <button onClick={() => window.aistudio.openSelectKey()} className="px-6 py-3 bg-white text-indigo-900 rounded-xl font-black text-sm hover:scale-105 transition-transform active:scale-95 shadow-xl shadow-white/5">지금 키 입력하기</button>
-              <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[10px] text-center text-slate-500 hover:text-indigo-400 transition-colors flex items-center justify-center gap-1 font-bold">
-                <CreditCard className="w-3 h-3" /> 결제 문서 확인 <ExternalLink className="w-2.5 h-2.5" />
-              </a>
-            </div>
+            <button onClick={() => (window as any).aistudio.openSelectKey()} className="px-6 py-3 bg-white text-indigo-900 rounded-xl font-black text-sm hover:scale-105 transition-transform active:scale-95 shadow-xl shadow-white/5">지금 키 연동하기</button>
           </div>
         )}
 
