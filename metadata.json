@@ -1,0 +1,7 @@
+{
+  "name": "AI YouTube Creator Studio",
+  "description": "A comprehensive content generation suite for YouTubers that creates scripts, titles, thumbnail prompts, and AI-generated voiceovers using Gemini API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
