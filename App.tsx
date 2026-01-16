@@ -5,7 +5,8 @@ import {
   Mic, Copy, Download, Play, Menu, X, CheckCircle, AlertCircle,
   ChevronRight, Wand2, Layers, RefreshCw, Loader2, Type, Video, 
   ExternalLink, Key, ShieldCheck, Lock, Server, AlertTriangle, Info, Upload,
-  Trash2, ImagePlus, FileArchive, FileVideo, PlayCircle
+  Trash2, ImagePlus, FileArchive, FileVideo, PlayCircle, Settings,
+  Cpu, Activity
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { GENRES, ASPECT_RATIOS, IMAGE_STYLES } from './constants';
@@ -40,6 +41,7 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null);
   const [hasKey, setHasKey] = useState(false);
   const [isAiStudio, setIsAiStudio] = useState(false);
+  const [isReady, setIsReady] = useState(false); // Gateway state
   
   // Progress States
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -68,23 +70,28 @@ export default function App() {
         try {
           const selected = await (window as any).aistudio.hasSelectedApiKey();
           setHasKey(selected);
+          if (selected) setIsReady(true);
         } catch (e) {
           setHasKey(false);
         }
       } else {
         const envKey = process.env.API_KEY;
-        setHasKey(!!envKey && envKey.length > 10);
+        const exists = !!envKey && envKey.length > 10;
+        setHasKey(exists);
+        if (exists) setIsReady(true);
       }
     };
 
     checkKey();
-    const timer = setInterval(checkKey, 5000);
+    const timer = setInterval(checkKey, 3000);
     return () => clearInterval(timer);
   }, []);
 
-  const handleKeyInteraction = () => {
+  const handleKeyInteraction = async () => {
     if (isAiStudio) {
-      (window as any).aistudio.openSelectKey();
+      await (window as any).aistudio.openSelectKey();
+      setHasKey(true);
+      setIsReady(true);
     } else {
       showMsg('Vercel 대시보드에서 API_KEY 환경 변수를 설정해야 합니다.', 'info');
     }
@@ -102,7 +109,8 @@ export default function App() {
       return;
     }
     if (!hasKey) {
-      showMsg('API 키가 설정되지 않았습니다.', 'error');
+      showMsg('API 연결이 필요합니다.', 'error');
+      setIsReady(false);
       return;
     }
 
@@ -218,7 +226,13 @@ export default function App() {
       setGeneratedVideos(prev => ({ ...prev, [index]: videoUrl }));
       showMsg('VEO 영상 생성 완료! 🎬', 'success');
     } catch (error) {
-      showMsg('영상 생성 실패.', 'error');
+      if (error instanceof Error && error.message.includes("entity was not found")) {
+        showMsg('API 키 권한 오류. 다시 설정해주세요.', 'error');
+        setHasKey(false);
+        setIsReady(false);
+      } else {
+        showMsg('영상 생성 실패.', 'error');
+      }
     } finally {
       setIsGeneratingVideo(null);
       setVideoStatus('');
@@ -358,6 +372,55 @@ export default function App() {
   const generatedImageCount = Object.keys(generatedImages).length;
   const generatedVideoCount = Object.keys(generatedVideos).length;
 
+  // Gateway Screen Component
+  if (!isReady) {
+    return (
+      <div className="min-h-screen bg-[#0a0f1e] flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-[#151c2e] rounded-[3rem] border border-[#1e293b] p-10 shadow-2xl text-center space-y-8 animate-in fade-in zoom-in duration-500">
+          <div className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-indigo-500/20">
+            <Film className="w-12 h-12 text-white" />
+          </div>
+          <div className="space-y-3">
+            <h1 className="text-3xl font-black text-white">AI 유튜브 마스터</h1>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              콘텐츠 생성을 위해 Google Gemini API 연결이 필요합니다. <br/>
+              안전한 환경에서 API 키를 설정해주세요.
+            </p>
+          </div>
+
+          <div className="bg-[#0a0f1e] rounded-2xl p-5 border border-[#1e293b] text-left space-y-4">
+             <div className="flex items-center gap-3">
+               <div className={`w-3 h-3 rounded-full animate-pulse ${hasKey ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'}`}></div>
+               <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+                 {hasKey ? '연결 가능 상태' : '연결 필요'}
+               </span>
+             </div>
+             <p className="text-[10px] text-slate-500 leading-tight">
+               * AI Studio 환경에서는 결제가 완료된 유료 프로젝트의 API 키를 선택해야 모든 기능(VEO 등)이 정상 작동합니다.
+             </p>
+          </div>
+
+          <button 
+            onClick={handleKeyInteraction}
+            className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-indigo-900/40"
+          >
+            {isAiStudio ? <Key className="w-5 h-5" /> : <Server className="w-5 h-5" />}
+            {isAiStudio ? 'Google API 키 설정하기' : 'Vercel 환경변수 확인'}
+          </button>
+          
+          <a 
+            href="https://ai.google.dev/gemini-api/docs/billing" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="block text-[10px] text-slate-500 hover:text-indigo-400 transition-colors flex items-center justify-center gap-1"
+          >
+            결제 및 한도 안내 확인하기 <ExternalLink className="w-2 h-2" />
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0f1e] text-slate-100 pb-12">
       <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" />
@@ -377,25 +440,18 @@ export default function App() {
                 </h1>
               </div>
 
-              {/* API Key Status Indicator */}
               <div className="hidden lg:flex items-center gap-4">
                 <div className="h-8 w-[1px] bg-[#1e293b]"></div>
                 <div 
                   onClick={handleKeyInteraction}
-                  className={`flex items-center gap-3 px-4 py-2 rounded-xl border transition-all cursor-pointer ${
-                    hasKey ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'
-                  }`}
+                  className="flex items-center gap-3 px-4 py-2 bg-emerald-500/5 border border-emerald-500/20 rounded-xl text-emerald-400 transition-all cursor-pointer hover:bg-emerald-500/10"
                 >
-                  {isAiStudio ? <Key className="w-4 h-4" /> : <Server className="w-4 h-4" />}
+                  <Activity className="w-4 h-4 animate-pulse" />
                   <div className="flex flex-col">
-                    <span className="text-[9px] font-black uppercase tracking-wider opacity-60">
-                      {isAiStudio ? 'AI Studio Mode' : 'Vercel Deployment'}
-                    </span>
-                    <span className="text-xs font-bold truncate max-w-[150px]">
-                      {hasKey ? 'API 연결됨' : '연결 필요'}
-                    </span>
+                    <span className="text-[9px] font-black uppercase tracking-wider opacity-60">Connected</span>
+                    <span className="text-xs font-bold truncate max-w-[150px]">Gemini AI Active</span>
                   </div>
-                  {hasKey ? <ShieldCheck className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
               </div>
             </div>
@@ -490,14 +546,35 @@ export default function App() {
                       <div className="absolute top-2 left-2 px-2 py-0.5 bg-indigo-600 text-[8px] font-black text-white rounded uppercase">Global Ref</div>
                     </div>
                   )}
-                  <p className="text-[9px] text-slate-600 leading-tight px-1">업로드한 이미지는 모든 장면의 비주얼 스타일 생성 시 참조됩니다.</p>
                 </div>
+              </div>
+            </section>
+
+            {/* Connection Settings Section */}
+            <section className="bg-[#0a0f1e] rounded-3xl border border-[#1e293b] p-6 shadow-xl space-y-4">
+               <h2 className="text-[11px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <Settings className="w-4 h-4 text-indigo-400" /> API 연결 설정
+              </h2>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-[#151c2e] rounded-xl border border-[#1e293b]">
+                  <div className="flex items-center gap-3">
+                    <Cpu className="w-4 h-4 text-slate-500" />
+                    <span className="text-xs font-bold text-slate-300">엔진 상태</span>
+                  </div>
+                  <span className="text-[10px] font-black text-emerald-400 uppercase">Active</span>
+                </div>
+                <button 
+                  onClick={handleKeyInteraction}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-[#1e293b] hover:bg-slate-800 text-white rounded-xl text-[11px] font-black transition-all border border-[#334155]"
+                >
+                  <RefreshCw className="w-3 h-3" /> API 키 변경하기
+                </button>
               </div>
             </section>
 
             <button 
               onClick={handleGenerate} 
-              disabled={loading || !hasKey} 
+              disabled={loading} 
               className="group w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl font-black flex items-center justify-center gap-3 shadow-2xl disabled:opacity-50 transition-all active:scale-95"
             >
               {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Zap className="w-6 h-6 fill-current" />}
@@ -640,7 +717,6 @@ export default function App() {
                                 </div>
                               )}
                               
-                              {/* Overlay for actions */}
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 z-30">
                                 <button onClick={() => triggerUpload(i)} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-all flex flex-col items-center gap-1" title="사진 업로드">
                                   <Upload className="w-4 h-4" />
