@@ -5,8 +5,9 @@ import {
   Mic, Copy, Download, Play, Menu, X, CheckCircle, AlertCircle,
   ChevronRight, Wand2, Layers, RefreshCw, Loader2, Type, Video, 
   ExternalLink, Key, ShieldCheck, Lock, Server, AlertTriangle, Info, Upload,
-  Trash2, ImagePlus
+  Trash2, ImagePlus, FileArchive, FileVideo, PlayCircle
 } from 'lucide-react';
+import JSZip from 'jszip';
 import { GENRES, ASPECT_RATIOS, IMAGE_STYLES } from './constants';
 import { 
   Language, Duration, Tone, AgeGroup, GeneratedContent, Message 
@@ -43,6 +44,8 @@ export default function App() {
   // Progress States
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [isDownloadingVideos, setIsDownloadingVideos] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0);
   const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({});
   const [userUploadedImages, setUserUploadedImages] = useState<Record<number, boolean>>({});
@@ -150,7 +153,6 @@ export default function App() {
     if (!generatedContent || isGeneratingImage) return;
     setIsGeneratingImage(true);
     try {
-      // Priority: 1. Scene-specific upload, 2. Global reference, 3. No image (Text-to-Image)
       const sourceImage = userUploadedImages[index] ? generatedImages[index] : (globalReferenceImage || undefined);
       const imageUrl = await gemini.generateImageFromPrompt(prompt, generatedContent.aspectRatio || selectedRatio, sourceImage);
       
@@ -242,6 +244,89 @@ export default function App() {
     }
   };
 
+  const handleDownloadAllImages = async () => {
+    const imageIndices = Object.keys(generatedImages);
+    if (imageIndices.length === 0) {
+      showMsg('다운로드할 이미지가 없습니다.', 'info');
+      return;
+    }
+
+    setIsDownloadingAll(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("images");
+      if (!folder) throw new Error("Folder creation failed");
+
+      imageIndices.forEach((key) => {
+        const index = parseInt(key);
+        const dataUrl = generatedImages[index];
+        const base64Data = dataUrl.split(',')[1];
+        folder.file(`scene_${index + 1}.png`, base64Data, { base64: true });
+      });
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveBlob(content, `images_${Date.now()}.zip`);
+      showMsg('이미지 압축 및 다운로드 완료! 📂', 'success');
+    } catch (error) {
+      showMsg('이미지 다운로드 중 오류 발생', 'error');
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  };
+
+  const handleDownloadAllVideos = async () => {
+    const videoIndices = Object.keys(generatedVideos);
+    if (videoIndices.length === 0) {
+      showMsg('다운로드할 영상이 없습니다.', 'info');
+      return;
+    }
+
+    setIsDownloadingVideos(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("videos");
+      if (!folder) throw new Error("Folder creation failed");
+
+      for (const key of videoIndices) {
+        const index = parseInt(key);
+        const videoUrl = generatedVideos[index];
+        const response = await fetch(videoUrl);
+        const blob = await response.blob();
+        folder.file(`scene_${index + 1}.mp4`, blob);
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveBlob(content, `videos_${Date.now()}.zip`);
+      showMsg('영상 압축 및 다운로드 완료! 🎬', 'success');
+    } catch (error) {
+      showMsg('영상 다운로드 중 오류 발생', 'error');
+    } finally {
+      setIsDownloadingVideos(false);
+    }
+  };
+
+  const handleIndividualVideoDownload = async (index: number) => {
+    const videoUrl = generatedVideos[index];
+    if (!videoUrl) return;
+    const link = document.createElement('a');
+    link.href = videoUrl;
+    link.download = `scene_${index + 1}.mp4`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const saveBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handleAudioGen = async () => {
     if (!generatedContent || isGeneratingAudio) return;
     setIsGeneratingAudio(true);
@@ -270,6 +355,8 @@ export default function App() {
   };
 
   const selectedGenreData = GENRES.find(g => g.id === selectedGenre);
+  const generatedImageCount = Object.keys(generatedImages).length;
+  const generatedVideoCount = Object.keys(generatedVideos).length;
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] text-slate-100 pb-12">
@@ -450,9 +537,11 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => copyToClipboard(generatedContent.script)} className="p-4 bg-[#0a0f1e] rounded-2xl hover:bg-slate-800 transition-all border border-[#1e293b] group">
-                    <Copy className="w-6 h-6 text-slate-400 group-hover:text-white" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => copyToClipboard(generatedContent.script)} className="p-4 bg-[#0a0f1e] rounded-2xl hover:bg-slate-800 transition-all border border-[#1e293b] group" title="대본 복사">
+                      <Copy className="w-6 h-6 text-slate-400 group-hover:text-white" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex border-b border-[#1e293b] overflow-x-auto bg-[#0a0f1e]/20 px-4">
@@ -478,23 +567,67 @@ export default function App() {
 
                   {activeTab === 'images' && (
                     <div className="space-y-8">
-                      <div className="flex flex-col sm:flex-row items-center justify-between bg-indigo-600/5 p-6 rounded-[2rem] border border-indigo-500/20 gap-4">
-                        <div className="flex items-center gap-4">
-                          <Layers className="w-8 h-8 text-indigo-500" />
-                          <div>
-                            <p className="text-sm font-black text-white">이미지 일괄 생성</p>
-                            <p className="text-[10px] text-slate-500">모든 장면의 비주얼을 한 번에 생성합니다.</p>
+                      {/* Batch Controls Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Image Batch Control */}
+                        <div className="flex flex-col bg-[#0a0f1e] p-6 rounded-[2.5rem] border border-[#1e293b] shadow-xl">
+                          <div className="flex items-center gap-4 mb-6">
+                            <div className="p-3 bg-indigo-600/10 rounded-2xl">
+                              <Layers className="w-6 h-6 text-indigo-500" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black text-white">이미지 마스터링</h4>
+                              <p className="text-[10px] text-slate-500">일괄 생성 및 ZIP 다운로드</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button 
+                              onClick={handleBatchImageGen} 
+                              disabled={isGeneratingBatch} 
+                              className="flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[11px] font-black transition-all disabled:opacity-50"
+                            >
+                              {isGeneratingBatch ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                              전체 생성 {isGeneratingBatch && `(${batchProgress}%)`}
+                            </button>
+                            <button 
+                              onClick={handleDownloadAllImages} 
+                              disabled={isDownloadingAll || generatedImageCount === 0} 
+                              className="flex items-center justify-center gap-2 py-3 bg-[#1e293b] hover:bg-slate-800 text-slate-300 rounded-xl text-[11px] font-black border border-[#334155] transition-all disabled:opacity-30"
+                            >
+                              {isDownloadingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileArchive className="w-4 h-4 text-emerald-500" />}
+                              ZIP 다운로드
+                            </button>
                           </div>
                         </div>
-                        <button onClick={handleBatchImageGen} disabled={isGeneratingBatch} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl text-xs font-black flex items-center gap-2">
-                          {isGeneratingBatch ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                          전체 생성 {isGeneratingBatch && `(${batchProgress}%)`}
-                        </button>
+
+                        {/* Video Batch Control */}
+                        <div className="flex flex-col bg-[#0a0f1e] p-6 rounded-[2.5rem] border border-[#1e293b] shadow-xl">
+                          <div className="flex items-center gap-4 mb-6">
+                            <div className="p-3 bg-rose-600/10 rounded-2xl">
+                              <FileVideo className="w-6 h-6 text-rose-500" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black text-white">비디오 마스터링</h4>
+                              <p className="text-[10px] text-slate-500">모든 장면 일괄 처리 및 저장</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3">
+                            <button 
+                              onClick={handleDownloadAllVideos} 
+                              disabled={isDownloadingVideos || generatedVideoCount === 0} 
+                              className="flex items-center justify-center gap-2 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[11px] font-black shadow-lg shadow-rose-900/20 transition-all disabled:opacity-30"
+                            >
+                              {isDownloadingVideos ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                              전체 비디오 ZIP 다운로드 ({generatedVideoCount})
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
+                      {/* Storyboard Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {generatedContent.imagePrompts.map((p, i) => (
-                          <div key={i} className="bg-[#0a0f1e] rounded-[1.5rem] overflow-hidden border border-[#1e293b] group">
+                          <div key={i} className="bg-[#0a0f1e] rounded-[1.5rem] overflow-hidden border border-[#1e293b] group/card">
                             <div className="relative aspect-video bg-slate-900 flex items-center justify-center group/img">
                               {generatedVideos[i] ? (
                                 <video src={generatedVideos[i]} controls autoPlay muted playsInline className="w-full h-full object-cover" />
@@ -503,25 +636,31 @@ export default function App() {
                               ) : (
                                 <div className="flex flex-col items-center gap-4 opacity-40">
                                   <ImageIcon className="w-12 h-12 text-slate-800" />
-                                  <p className="text-[10px] font-bold text-slate-500">업로드하거나 생성하세요</p>
+                                  <p className="text-[10px] font-bold text-slate-500">이미지를 업로드하거나 생성하세요</p>
                                 </div>
                               )}
                               
                               {/* Overlay for actions */}
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 z-30">
-                                <button onClick={() => triggerUpload(i)} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-all flex flex-col items-center gap-1">
+                                <button onClick={() => triggerUpload(i)} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-all flex flex-col items-center gap-1" title="사진 업로드">
                                   <Upload className="w-4 h-4" />
-                                  <span className="text-[8px] font-black">Upload</span>
+                                  <span className="text-[8px] font-black uppercase">Upload</span>
                                 </button>
-                                {generatedImages[i] && (
-                                   <button onClick={() => handleVideoGen(i)} className="p-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white border border-indigo-400 transition-all flex flex-col items-center gap-1">
+                                {generatedImages[i] && !generatedVideos[i] && (
+                                   <button onClick={() => handleVideoGen(i)} className="p-3 bg-rose-600 hover:bg-rose-500 rounded-xl text-white border border-rose-400 transition-all flex flex-col items-center gap-1" title="비디오 생성">
                                     <Video className="w-4 h-4" />
-                                    <span className="text-[8px] font-black">Video</span>
+                                    <span className="text-[8px] font-black uppercase">Video</span>
                                   </button>
                                 )}
-                                <button onClick={() => handleImageGen(p, i)} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-all flex flex-col items-center gap-1">
+                                {generatedVideos[i] && (
+                                  <button onClick={() => handleIndividualVideoDownload(i)} className="p-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-white border border-emerald-400 transition-all flex flex-col items-center gap-1" title="비디오 다운로드">
+                                    <Download className="w-4 h-4" />
+                                    <span className="text-[8px] font-black uppercase">Download</span>
+                                  </button>
+                                )}
+                                <button onClick={() => handleImageGen(p, i)} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-all flex flex-col items-center gap-1" title="이미지 다시 생성">
                                   <RefreshCw className="w-4 h-4" />
-                                  <span className="text-[8px] font-black">{userUploadedImages[i] ? 'AI Edit' : 'AI Gen'}</span>
+                                  <span className="text-[8px] font-black uppercase">{userUploadedImages[i] ? 'AI Edit' : 'AI Gen'}</span>
                                 </button>
                               </div>
 
@@ -534,12 +673,15 @@ export default function App() {
                               {isGeneratingVideo === i && (
                                 <div className="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-40">
                                   <div className="w-8 h-8 border-4 border-indigo-500/10 border-t-indigo-500 rounded-full animate-spin mb-4" />
-                                  <p className="text-[10px] text-white font-black">{videoStatus}</p>
+                                  <p className="text-[10px] text-white font-black uppercase tracking-widest">{videoStatus}</p>
                                 </div>
                               )}
                             </div>
-                            <div className="p-4 bg-slate-900/50">
+                            <div className="p-4 bg-slate-900/50 flex items-start justify-between gap-4">
                               <p className="text-[10px] text-slate-500 italic line-clamp-2">"{p}"</p>
+                              <div className="flex flex-col items-end shrink-0">
+                                <span className="text-[10px] font-black text-slate-700">SCENE {i + 1}</span>
+                              </div>
                             </div>
                           </div>
                         ))}
