@@ -56,9 +56,10 @@ export const generateContent = async (
   
   const systemInstruction = `당신은 전문 유튜브 크리에이터 마스터입니다.
   반드시 지켜야 할 규칙:
-  1. 모든 텍스트(대본, 제목, TTS용 대본)는 예외 없이 반드시 '한국어'로 작성하세요.
-  2. 설정된 톤앤매너(${tone})와 타겟층(${ageGroup})을 완벽히 반영하세요.
-  3. 시각적 스타일(${visualStyle})에 맞는 구체적인 이미지 생성 프롬프트를 영어로 작성하세요 (프롬프트만 영어).`;
+  1. 모든 텍스트는 반드시 '한국어'로 작성하세요.
+  2. ttsScript는 script의 모든 내용을 빠짐없이 낭독할 수 있도록 구어체로 작성하되, '성우:', '나레이션:', '장면 1:' 같은 태그나 괄호 안의 지문(예: 웃으며)은 절대 포함하지 마세요. 
+  3. ttsScript는 오직 목소리로 나올 '순수 텍스트'만 포함해야 합니다.
+  4. script와 ttsScript의 내용적 일치율은 100%여야 합니다.`;
 
   const prompt = `콘텐츠 기획 요청:
   - 장르: ${genreName}
@@ -68,10 +69,10 @@ export const generateContent = async (
   - 생성할 이미지 개수: ${imageCount}개
 
   결과물 구성:
-  - 대본: 도입부, 전개, 결말이 포함된 전체 대본 (한국어)
-  - 제목: 조회수를 유도하는 5개의 제목 (한국어)
-  - 이미지 프롬프트: 각 장면을 묘사하는 ${imageCount}개의 상세 프롬프트 (영어)
-  - TTS 대본: 구어체로 다듬어진 내레이션 원고 (한국어)`;
+  - 대본(script): 구조화된 전체 영상 대본
+  - 제목(titles): 조회수를 유도하는 5개의 제목
+  - 이미지 프롬프트(imagePrompts): 장면별 상세 프롬프트 (영어)
+  - TTS 대본(ttsScript): script의 모든 내용을 포함한, 읽기 전용 순수 텍스트 원고`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -82,10 +83,10 @@ export const generateContent = async (
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          script: { type: Type.STRING, description: "전체 영상 대본 (한국어)" },
-          titles: { type: Type.ARRAY, items: { type: Type.STRING }, description: "5개의 추천 제목 (한국어)" },
-          imagePrompts: { type: Type.ARRAY, items: { type: Type.STRING }, description: "장면별 이미지 생성 프롬프트 (영어)" },
-          ttsScript: { type: Type.STRING, description: "내레이션용 대본 (한국어)" }
+          script: { type: Type.STRING },
+          titles: { type: Type.ARRAY, items: { type: Type.STRING } },
+          imagePrompts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          ttsScript: { type: Type.STRING }
         },
         required: ["script", "titles", "imagePrompts", "ttsScript"]
       }
@@ -178,9 +179,10 @@ export const generateVideo = async (
 
 export const generateSpeech = async (text: string, language: Language): Promise<string> => {
   const ai = getAI();
+  // We use a very strict prompt for the TTS model to avoid it skipping any tokens.
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: `Read this script naturally: ${text}` }] }],
+    contents: [{ parts: [{ text: `Speak the following text exactly as written, word for word, with a natural and clear voice: ${text}` }] }],
     config: {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
