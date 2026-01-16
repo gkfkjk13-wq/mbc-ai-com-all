@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { Language, Duration, Tone, AgeGroup, GeneratedContent } from "../types";
 
-// Standard AI helper to obtain a new client instance
+// Helper to ensure we always use the latest process.env.API_KEY
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 export const recommendGenre = async (
@@ -13,18 +13,16 @@ export const recommendGenre = async (
   const ai = getAI();
   const genreList = availableGenres.map(g => `${g.id} (${g.name})`).join(", ");
   
-  const prompt = `Based on a YouTube video with:
-  - Tone: ${tone}
-  - Target Audience: ${ageGroup}
-  
-  From this list of genres: [${genreList}], recommend the single best one that would likely go viral.
-  Return only JSON with "genreId" and "reason" in Korean.`;
+  const prompt = `Available Genres: [${genreList}]
+  Tone: ${tone}
+  Target: ${ageGroup}
+  Recommend one genre from the list and explain why in 1 sentence.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
-      systemInstruction: "You are a specialized YouTube strategy consultant. Always respond in Korean.",
+      systemInstruction: "당신은 유튜브 전략 전문가입니다. 반드시 모든 응답을 한국어로 작성하세요. JSON 형식을 엄격히 준수하세요.",
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -38,7 +36,7 @@ export const recommendGenre = async (
   });
 
   const text = response.text;
-  if (!text) throw new Error("Recommendation failed");
+  if (!text) throw new Error("추천 장르 생성 실패");
   return JSON.parse(text);
 };
 
@@ -54,29 +52,26 @@ export const generateContent = async (
   imageCount: number
 ): Promise<Partial<GeneratedContent>> => {
   const ai = getAI();
-  const langText = language === Language.KOREAN ? '한국어' : 'English';
-  const durText = duration === Duration.LONG ? 'Long-form (10+ min)' : 'Short-form (under 1 min)';
+  const durText = duration === Duration.LONG ? 'Long-form (10분 내외)' : 'Short-form (1분 미만)';
   
-  // Stronger instruction to prevent English output
-  const systemInstruction = `You are a professional YouTube content master. 
-  CRITICAL: Every single field in your response (script, titles, ttsScript) MUST be written in ${langText}. 
-  Do not use any other language under any circumstances.`;
+  const systemInstruction = `당신은 전문 유튜브 크리에이터 마스터입니다.
+  반드시 지켜야 할 규칙:
+  1. 모든 텍스트(대본, 제목, TTS용 대본)는 예외 없이 반드시 '한국어'로 작성하세요.
+  2. 설정된 톤앤매너(${tone})와 타겟층(${ageGroup})을 완벽히 반영하세요.
+  3. 시각적 스타일(${visualStyle})에 맞는 구체적인 이미지 생성 프롬프트를 영어로 작성하세요 (프롬프트만 영어).`;
 
-  const prompt = `Generate viral content for:
-  - Genre: ${genreName}
-  - Subject: ${subject || 'Trending content'}
-  - Language: ${langText}
-  - Format: ${durText}
-  - Tone: ${tone}
-  - Target Audience: ${ageGroup}
-  - Script Verbosity: ${scriptLength}%
-  - Visual Style: ${visualStyle}
+  const prompt = `콘텐츠 기획 요청:
+  - 장르: ${genreName}
+  - 주제: ${subject || '최신 트렌드'}
+  - 형식: ${durText}
+  - 이미지 스타일: ${visualStyle}
+  - 생성할 이미지 개수: ${imageCount}개
 
-  Include:
-  1. A full script in ${langText}.
-  2. 5 high-quality titles in ${langText}.
-  3. Exactly ${imageCount} image prompts following the "${visualStyle}" style.
-  4. A natural TTS version of the script in ${langText}.`;
+  결과물 구성:
+  - 대본: 도입부, 전개, 결말이 포함된 전체 대본 (한국어)
+  - 제목: 조회수를 유도하는 5개의 제목 (한국어)
+  - 이미지 프롬프트: 각 장면을 묘사하는 ${imageCount}개의 상세 프롬프트 (영어)
+  - TTS 대본: 구어체로 다듬어진 내레이션 원고 (한국어)`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -87,10 +82,10 @@ export const generateContent = async (
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          script: { type: Type.STRING },
-          titles: { type: Type.ARRAY, items: { type: Type.STRING } },
-          imagePrompts: { type: Type.ARRAY, items: { type: Type.STRING } },
-          ttsScript: { type: Type.STRING }
+          script: { type: Type.STRING, description: "전체 영상 대본 (한국어)" },
+          titles: { type: Type.ARRAY, items: { type: Type.STRING }, description: "5개의 추천 제목 (한국어)" },
+          imagePrompts: { type: Type.ARRAY, items: { type: Type.STRING }, description: "장면별 이미지 생성 프롬프트 (영어)" },
+          ttsScript: { type: Type.STRING, description: "내레이션용 대본 (한국어)" }
         },
         required: ["script", "titles", "imagePrompts", "ttsScript"]
       }
@@ -98,17 +93,34 @@ export const generateContent = async (
   });
 
   const text = response.text;
-  if (!text) throw new Error("No response from AI");
+  if (!text) throw new Error("콘텐츠 생성에 실패했습니다.");
   return JSON.parse(text);
 };
 
-export const generateImageFromPrompt = async (prompt: string, aspectRatio: string = "16:9"): Promise<string> => {
+export const generateImageFromPrompt = async (
+  prompt: string, 
+  aspectRatio: string = "16:9",
+  base64Source?: string
+): Promise<string> => {
   const ai = getAI();
+  const parts: any[] = [];
+  
+  if (base64Source) {
+    const data = base64Source.split(',')[1] || base64Source;
+    parts.push({
+      inlineData: {
+        data: data,
+        mimeType: 'image/png'
+      }
+    });
+    parts.push({ text: `Modify this image to match the following description while keeping the same composition. Style: ${prompt}` });
+  } else {
+    parts.push({ text: `Cinematic YouTube masterpiece, highly detailed, 8k resolution: ${prompt}` });
+  }
+
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [{ text: `High quality cinematic YouTube visual, detailed, professional: ${prompt}` }]
-    },
+    contents: { parts },
     config: {
       imageConfig: {
         aspectRatio: aspectRatio as any
@@ -121,7 +133,7 @@ export const generateImageFromPrompt = async (prompt: string, aspectRatio: strin
       return `data:image/png;base64,${part.inlineData.data}`;
     }
   }
-  throw new Error("Failed to generate image");
+  throw new Error("이미지 생성 실패");
 };
 
 export const generateVideo = async (
@@ -133,11 +145,11 @@ export const generateVideo = async (
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
   const base64Data = imageB64.split(',')[1] || imageB64;
   
-  onStatusUpdate?.("영상 데이터 전송 중...");
+  onStatusUpdate?.("영상을 분석하고 렌더링을 준비합니다...");
   
   let operation = await ai.models.generateVideos({
     model: 'veo-3.1-fast-generate-preview',
-    prompt: `Animate this scene realistically: ${prompt}`,
+    prompt: `Motion animate this scene: ${prompt}`,
     image: {
       imageBytes: base64Data,
       mimeType: 'image/png'
@@ -150,27 +162,25 @@ export const generateVideo = async (
   });
 
   while (!operation.done) {
-    onStatusUpdate?.("AI가 영상을 렌더링하고 있습니다 (30~60초 소요)...");
+    onStatusUpdate?.("VEO 엔진이 고화질 영상을 생성 중입니다 (약 30~60초)...");
     await new Promise(resolve => setTimeout(resolve, 10000));
     operation = await ai.operations.getVideosOperation({ operation: operation });
   }
 
   const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!downloadLink) throw new Error("Video generation failed");
+  if (!downloadLink) throw new Error("Video link not found");
   
-  onStatusUpdate?.("영상 파일을 로드하고 있습니다...");
+  onStatusUpdate?.("영상 데이터를 브라우저로 가져오는 중...");
   const fetchResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-  if (!fetchResponse.ok) throw new Error("Failed to download video file");
   const videoBlob = await fetchResponse.blob();
   return URL.createObjectURL(videoBlob);
 };
 
 export const generateSpeech = async (text: string, language: Language): Promise<string> => {
   const ai = getAI();
-  const langName = language === Language.KOREAN ? 'Korean' : 'English';
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: `Read this script naturally in ${langName}: ${text}` }] }],
+    contents: [{ parts: [{ text: `Read this script naturally: ${text}` }] }],
     config: {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
@@ -182,15 +192,14 @@ export const generateSpeech = async (text: string, language: Language): Promise<
   });
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) throw new Error("Failed to generate audio");
+  if (!base64Audio) throw new Error("Audio generation failed");
   return base64Audio;
 };
 
 export function decode(base64: string) {
   const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
